@@ -1,6 +1,6 @@
 {
   "name": "westel-license",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "License validation and management package for Node.js applications",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

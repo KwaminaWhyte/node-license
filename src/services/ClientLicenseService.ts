@@ -398,23 +398,71 @@ export class ClientLicenseService implements LicenseServiceInterface {
   async getFeatures(): Promise<Record<string, FeatureConfig>> {
     // Try to get from cache first
     const cached = await this.cache.get<Record<string, FeatureConfig>>(CACHE_KEYS.FEATURES);
-    if (cached) {
+    if (cached && typeof cached === 'object' && !Array.isArray(cached)) {
+      // Only use cache if it's in the correct object format
       return cached;
     }
 
     // Get validation result which includes features at top level
-    const validation = await this.cache.get<ValidationResult & { features?: Record<string, FeatureConfig> }>(CACHE_KEYS.VALIDATION);
+    type StructuredFeature = {
+      key: string;
+      name: string;
+      type: string;
+      configuration?: { limit?: number; quota?: number } | [];
+    };
+    type ValidationWithFeatures = ValidationResult & {
+      features?: string[] | Record<string, FeatureConfig>;
+      structuredFeatures?: Record<string, StructuredFeature[]>;
+      structured_features?: Record<string, StructuredFeature[]>; // snake_case from server
+    };
+    const validation = await this.cache.get<ValidationWithFeatures>(CACHE_KEYS.VALIDATION);
 
-    // Features are returned at top level of validation response
-    let features = validation?.features || {};
+    let features: Record<string, FeatureConfig> = {};
+
+    // First try to use structuredFeatures for detailed config (check both camelCase and snake_case)
+    const structuredFeatures = validation?.structuredFeatures || validation?.structured_features;
+    if (structuredFeatures) {
+      for (const category of Object.values(structuredFeatures)) {
+        for (const feature of category) {
+          const config = Array.isArray(feature.configuration) ? {} : feature.configuration;
+          features[feature.key] = {
+            enabled: true,
+            limit: config?.limit,
+            quota: config?.quota,
+          };
+        }
+      }
+    }
+
+    // If no structuredFeatures, check features field
+    if (Object.keys(features).length === 0 && validation?.features) {
+      // Features can be an array of strings or an object
+      if (Array.isArray(validation.features)) {
+        // Convert array to object format
+        for (const key of validation.features) {
+          features[key] = { enabled: true };
+        }
+      } else if (typeof validation.features === 'object') {
+        features = validation.features;
+      }
+    }
 
     // Fallback: check license.product.features for backward compatibility
     if (Object.keys(features).length === 0) {
       const license = await this.getLicenseInfo();
-      features = license?.product?.features || {};
+      const productFeatures = license?.product?.features;
+      if (productFeatures) {
+        if (Array.isArray(productFeatures)) {
+          for (const key of productFeatures) {
+            features[key] = { enabled: true };
+          }
+        } else if (typeof productFeatures === 'object') {
+          features = productFeatures as Record<string, FeatureConfig>;
+        }
+      }
     }
 
-    // Cache features
+    // Cache features in correct format
     if (Object.keys(features).length > 0) {
       await this.cache.set(CACHE_KEYS.FEATURES, features, this.config.cacheTtl);
     }

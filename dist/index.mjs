@@ -802,14 +802,45 @@ var ClientLicenseService = class {
    */
   async getFeatures() {
     const cached = await this.cache.get(CACHE_KEYS.FEATURES);
-    if (cached) {
+    if (cached && typeof cached === "object" && !Array.isArray(cached)) {
       return cached;
     }
     const validation = await this.cache.get(CACHE_KEYS.VALIDATION);
-    let features = validation?.features || {};
+    let features = {};
+    const structuredFeatures = validation?.structuredFeatures || validation?.structured_features;
+    if (structuredFeatures) {
+      for (const category of Object.values(structuredFeatures)) {
+        for (const feature of category) {
+          const config = Array.isArray(feature.configuration) ? {} : feature.configuration;
+          features[feature.key] = {
+            enabled: true,
+            limit: config?.limit,
+            quota: config?.quota
+          };
+        }
+      }
+    }
+    if (Object.keys(features).length === 0 && validation?.features) {
+      if (Array.isArray(validation.features)) {
+        for (const key of validation.features) {
+          features[key] = { enabled: true };
+        }
+      } else if (typeof validation.features === "object") {
+        features = validation.features;
+      }
+    }
     if (Object.keys(features).length === 0) {
       const license = await this.getLicenseInfo();
-      features = license?.product?.features || {};
+      const productFeatures = license?.product?.features;
+      if (productFeatures) {
+        if (Array.isArray(productFeatures)) {
+          for (const key of productFeatures) {
+            features[key] = { enabled: true };
+          }
+        } else if (typeof productFeatures === "object") {
+          features = productFeatures;
+        }
+      }
     }
     if (Object.keys(features).length > 0) {
       await this.cache.set(CACHE_KEYS.FEATURES, features, this.config.cacheTtl);
